@@ -1,5 +1,11 @@
 # Changelog
 
+## v1.1.1
+- Changed non-budget controls to recalculate live
+- Retained budget Confirm / Lock behaviour
+- Added light grey styling to recommended allocation columns in XLSX export
+- Added pale yellow styling to totals rows in XLSX export
+
 ## v1.1.0
 - Added budget Confirm / Lock behaviour
 - Added Undo budget control

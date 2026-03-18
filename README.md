@@ -1,15 +1,22 @@
 # Volunteer Grants Allocation Model
 
-Current version: **v1.1.0**
+Current version: **v1.1.1**
 
 A Streamlit web app for testing Volunteer Grants allocation scenarios.
 
-## Main additions in v1.1.0
+## Main additions in v1.1.1
 
-- Budget **Confirm / Lock** control
+- Non-budget controls now recalculate live
+- Budget lock / confirm retained
+- Excel export now styles recommended allocation columns in light grey
+- Excel export now styles totals rows in pale yellow
+
+## Main additions already present from v1.1.0
+
+- Budget Confirm / Lock control
 - Undo budget control
 - Undo / revert controls for the other settings
-- Onscreen **2025–26 proposed recommendation view**
+- Onscreen 2025–26 proposed recommendation view
 - Committee-friendly allocation column names:
   - `RecommendedAllocation_Fair`
   - `RecommendedAllocation_Dynamic`
