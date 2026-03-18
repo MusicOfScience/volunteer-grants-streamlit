@@ -1,19 +1,17 @@
-# Volunteer Grants Allocation Model
+# Volunteer Grants Allocation Model (Streamlit)
 
-A Streamlit web app for testing Volunteer Grants allocation scenarios.
-
-## Files
+Files:
 - `streamlit_app.py` — Streamlit front end
 - `volunteer_grants_engine.py` — model engine
 - `requirements.txt` — dependencies
 
-## Deploy
-This app is intended for Streamlit Community Cloud.
+## Deploy on Streamlit Community Cloud
 
-Entrypoint:
-`streamlit_app.py`
+1. Create a GitHub repo
+2. Add these files to the repo root
+3. Create a new Streamlit app from that repo
+4. Set the entrypoint to:
 
-## Notes
-- Volunteer Grants only
-- Upload the historic awards workbook and current applicants workbook through the app
-- Do not store working applicant spreadsheets in the repo
+```text
+streamlit_app.py
+```
