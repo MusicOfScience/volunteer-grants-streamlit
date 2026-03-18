@@ -26,7 +26,7 @@ if "live_settings" not in st.session_state:
     st.session_state.live_settings = st.session_state.confirmed_settings.copy()
 
 st.title(f"Volunteer Grants Allocation Model — {APP_VERSION}")
-st.caption("Volunteer Grants only · budget lock retained · non-budget settings now recalculate live")
+st.caption("Volunteer Grants only · eligibility-aware duplicate review · audit-focused export views")
 
 with st.sidebar:
     st.header("Model settings")
@@ -106,7 +106,6 @@ with st.sidebar:
         value=bool(st.session_state.live_settings["round_to_dollar"])
     )
 
-    # live update of non-budget settings
     st.session_state.live_settings.update({
         "protected_threshold": protected_threshold,
         "min_application": min_application,
@@ -183,23 +182,40 @@ else:
     st.caption("Dynamic method: a more directly weighted distribution of the available money above the threshold floor, based on extra capacity and the moderate historical penalty.")
     st.dataframe(outputs["submission_view_dynamic"], use_container_width=True)
 
-tabs = st.tabs(["Allocation Results","Method Comparison","Diagnostics","Penalty Impact","Validation","Duplicates / ABNs","Downloads"])
+tabs = st.tabs([
+    "Allocation Results",
+    "Method Comparison",
+    "Diagnostics",
+    "Penalty Impact",
+    "Eligibility & Duplicate Review",
+    "Validation",
+    "Downloads"
+])
+
 with tabs[0]:
     st.dataframe(outputs["results"], use_container_width=True)
+
 with tabs[1]:
     st.dataframe(outputs["method_comparison"], use_container_width=True)
+
 with tabs[2]:
     st.dataframe(outputs["diagnostics"], use_container_width=True)
     st.dataframe(outputs["parameters"], use_container_width=True)
+
 with tabs[3]:
     st.dataframe(outputs["penalty_impact"], use_container_width=True)
+
 with tabs[4]:
-    st.dataframe(outputs["validation"], use_container_width=True)
+    st.subheader("Included in Model")
+    st.dataframe(outputs["included_in_model"], use_container_width=True)
+    st.subheader("Excluded by Eligibility")
+    st.dataframe(outputs["excluded_by_eligibility"], use_container_width=True)
+    st.subheader("Duplicate Review")
+    st.dataframe(outputs["review_table"], use_container_width=True)
+
 with tabs[5]:
-    st.subheader("Duplicate review")
-    st.dataframe(outputs["duplicate_review"], use_container_width=True)
-    st.subheader("ABN flags")
-    st.dataframe(outputs["abn_flags"], use_container_width=True)
+    st.dataframe(outputs["validation"], use_container_width=True)
+
 with tabs[6]:
     st.download_button(
         "Download XLSX export",

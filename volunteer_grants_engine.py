@@ -9,7 +9,7 @@ from openpyxl import load_workbook
 from openpyxl.styles import PatternFill, Font, Border, Side, Alignment
 from openpyxl.utils import get_column_letter
 
-APP_VERSION = "v1.1.1"
+APP_VERSION = "v1.1.2"
 
 
 @dataclass
@@ -104,22 +104,16 @@ def round_and_reconcile(series, target_total, round_to_dollar=True):
     return rounded.astype(float)
 
 
-def _add_totals_row(df: pd.DataFrame, allocation_col: str, protected_count: int, above_count: int) -> pd.DataFrame:
-    out = df.copy()
-    totals = {col: "" for col in out.columns}
-    if "OrganisationName" in out.columns:
-        totals["OrganisationName"] = "GRAND TOTAL"
-    if "RequestedAmount" in out.columns:
-        totals["RequestedAmount"] = out["RequestedAmount"].sum()
-    if allocation_col in out.columns:
-        totals[allocation_col] = out[allocation_col].sum()
-    if "ApplicantCount" in out.columns:
-        totals["ApplicantCount"] = len(out)
-    if "ProtectedApplicantCount" in out.columns:
-        totals["ProtectedApplicantCount"] = protected_count
-    if "AboveThresholdApplicantCount" in out.columns:
-        totals["AboveThresholdApplicantCount"] = above_count
-    return pd.concat([out, pd.DataFrame([totals])], ignore_index=True)
+def _normalise_eligible_flag(value):
+    if pd.isna(value):
+        return ""
+    v = str(value).strip().lower()
+    return v
+
+
+def _is_excluded_by_eligibility(value):
+    v = _normalise_eligible_flag(value)
+    return v in {"n", "no"}
 
 
 def _style_excel_workbook(output: io.BytesIO) -> bytes:
@@ -152,18 +146,16 @@ def _style_excel_workbook(output: io.BytesIO) -> bytes:
     }
 
     for ws in wb.worksheets:
-        # header styling
         for cell in ws[1]:
             cell.fill = header_fill
             cell.font = bold_font
             cell.border = border
             cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
 
-        # identify total row if present
         total_row_num = None
         for row in range(2, ws.max_row + 1):
-            first_vals = [ws.cell(row=row, column=col).value for col in range(1, min(4, ws.max_column) + 1)]
-            if "GRAND TOTAL" in [str(v) for v in first_vals if v is not None]:
+            vals = [ws.cell(row=row, column=col).value for col in range(1, min(4, ws.max_column) + 1)]
+            if "GRAND TOTAL" in [str(v) for v in vals if v is not None]:
                 total_row_num = row
                 break
 
@@ -207,6 +199,24 @@ def build_excel_bytes(sheets: Dict[str, pd.DataFrame]) -> bytes:
     return _style_excel_workbook(output)
 
 
+def _add_totals_row(df: pd.DataFrame, allocation_col: str, protected_count: int, above_count: int) -> pd.DataFrame:
+    out = df.copy()
+    totals = {col: "" for col in out.columns}
+    if "OrganisationName" in out.columns:
+        totals["OrganisationName"] = "GRAND TOTAL"
+    if "RequestedAmount" in out.columns:
+        totals["RequestedAmount"] = out["RequestedAmount"].sum()
+    if allocation_col in out.columns:
+        totals[allocation_col] = out[allocation_col].sum()
+    if "ApplicantCount" in out.columns:
+        totals["ApplicantCount"] = len(out)
+    if "ProtectedApplicantCount" in out.columns:
+        totals["ProtectedApplicantCount"] = protected_count
+    if "AboveThresholdApplicantCount" in out.columns:
+        totals["AboveThresholdApplicantCount"] = above_count
+    return pd.concat([out, pd.DataFrame([totals])], ignore_index=True)
+
+
 def read_historic_workbook(file_obj):
     hist = pd.read_excel(file_obj, sheet_name=0)
     hist.columns = [clean_header(c) for c in hist.columns]
@@ -243,24 +253,32 @@ def read_current_workbook(file_obj):
     curr = pd.read_excel(file_obj, sheet_name=0)
     curr.columns = [clean_header(c) for c in curr.columns]
     curr = curr.rename(columns={
+        "ID": "ApplicationID",
         "Id": "ApplicationID",
         "Start time": "StartTime",
         "Completion time": "CompletionTime",
+        "Last modified time": "LastModifiedTime",
         "Organisation Name:": "OrganisationName",
         "Organisation ABN:": "OrganisationABN",
         "What is the total amount of funding being sought in dollars?": "RequestedAmount",
     })
 
-    for col in ["ApplicationID", "StartTime", "CompletionTime", "OrganisationName", "OrganisationABN", "RequestedAmount"]:
+    for col in ["ApplicationID", "StartTime", "CompletionTime", "LastModifiedTime", "OrganisationName", "OrganisationABN", "RequestedAmount"]:
         if col not in curr.columns:
             curr[col] = np.nan
 
     curr["StartTime"] = excel_datetime_fix(curr["StartTime"])
     curr["CompletionTime"] = excel_datetime_fix(curr["CompletionTime"])
-    curr["SortTime"] = curr["CompletionTime"].combine_first(curr["StartTime"])
+    curr["LastModifiedTime"] = excel_datetime_fix(curr["LastModifiedTime"])
+    curr["SortTime"] = curr["LastModifiedTime"].combine_first(curr["CompletionTime"]).combine_first(curr["StartTime"])
     curr["OrganisationName"] = curr["OrganisationName"].apply(clean_name)
     curr["OrganisationABN"] = curr["OrganisationABN"].apply(clean_abn)
     curr["RequestedAmount"] = to_numeric(curr["RequestedAmount"])
+
+    if "Eligible?" not in curr.columns:
+        curr["Eligible?"] = np.nan
+    curr["EligibilityNormalised"] = curr["Eligible?"].apply(_normalise_eligible_flag)
+    curr["ExcludedByEligibility"] = curr["Eligible?"].apply(_is_excluded_by_eligibility)
 
     curr = curr[
         ~(
@@ -269,9 +287,6 @@ def read_current_workbook(file_obj):
             & curr["RequestedAmount"].isna()
         )
     ].copy()
-
-    if "Eligible?" not in curr.columns:
-        curr["Eligible?"] = np.nan
 
     return curr
 
@@ -292,26 +307,66 @@ def run_model(historic_file, current_file, params: ModelParams) -> Dict[str, Any
     )
 
     curr["DuplicateKey"] = np.where(curr["OrganisationABN"] != "", curr["OrganisationABN"], curr["OrganisationName"])
-    dup_review = curr[curr["DuplicateKey"].duplicated(keep=False)].copy().sort_values(["DuplicateKey", "SortTime"])
+    curr["IsDuplicateGroup"] = curr["DuplicateKey"].duplicated(keep=False)
 
-    abn_name_counts = (
-        curr[curr["OrganisationABN"] != ""]
-        .groupby("OrganisationABN")["OrganisationName"]
-        .nunique()
-        .reset_index(name="DistinctOrganisationNamesForABN")
-    )
-    abn_flags = abn_name_counts[abn_name_counts["DistinctOrganisationNamesForABN"] > 1].copy()
+    # review-first duplicate handling
+    review_df = curr.copy().sort_values(["DuplicateKey", "SortTime"])
+    included_rows = []
+    review_rows = []
 
-    curr_latest = (
-        curr.sort_values(["DuplicateKey", "SortTime"])
-        .groupby("DuplicateKey", as_index=False)
-        .tail(1)
-        .copy()
-        .reset_index(drop=True)
-    )
-    base_row_count = len(curr_latest)
+    for key, group in review_df.groupby("DuplicateKey", dropna=False):
+        g = group.sort_values(["SortTime"], ascending=True).copy()
 
-    df = curr_latest.merge(
+        non_excluded = g[~g["ExcludedByEligibility"]].copy()
+        excluded = g[g["ExcludedByEligibility"]].copy()
+
+        if len(g) == 1:
+            row = g.iloc[0].copy()
+            if row["ExcludedByEligibility"]:
+                row["ReviewStatus"] = "Excluded - Eligibility"
+                review_rows.append(row)
+            else:
+                row["ReviewStatus"] = "Included"
+                included_rows.append(row)
+                review_rows.append(row)
+            continue
+
+        # duplicate group
+        if len(non_excluded) == 0:
+            for _, row in g.iterrows():
+                row = row.copy()
+                row["ReviewStatus"] = "Excluded - Eligibility"
+                review_rows.append(row)
+            continue
+
+        keep_idx = non_excluded["SortTime"].idxmax()
+        for idx, row in g.iterrows():
+            row = row.copy()
+            if row["ExcludedByEligibility"]:
+                if idx == keep_idx:
+                    row["ReviewStatus"] = "Included - Later version retained"
+                    included_rows.append(row)
+                else:
+                    row["ReviewStatus"] = "Excluded - Eligibility"
+                review_rows.append(row)
+            else:
+                if idx == keep_idx:
+                    row["ReviewStatus"] = "Included - Later version retained"
+                    included_rows.append(row)
+                else:
+                    row["ReviewStatus"] = "Excluded - Superseded"
+                review_rows.append(row)
+
+    review_table = pd.DataFrame(review_rows).reset_index(drop=True)
+    included_model = pd.DataFrame(included_rows).reset_index(drop=True)
+    excluded_eligibility = review_table[review_table["ReviewStatus"] == "Excluded - Eligibility"].copy()
+
+    base_row_count = len(included_model)
+
+    if len(included_model) == 0:
+        raise ValueError("No rows remain in the model after eligibility and duplicate handling.")
+
+    df = included_model.merge(
         hist_abn[["OrganisationABN_Hist", "Award_2023_24", "Award_2024_25"]],
         how="left",
         left_on="OrganisationABN",
@@ -442,13 +497,14 @@ def run_model(historic_file, current_file, params: ModelParams) -> Dict[str, Any
             "Protected Spend", "Remaining Budget After Protected Spend", "Above-Threshold Base Floor Cost",
             "Extra Budget Above Floor", "Haircut Mode", "Haircut Rate", "Soft Cap", "Penalty Weight",
             "Year Weight 2023-24", "Year Weight 2024-25", "Applicant Count",
-            "Protected Applicant Count", "Above-Threshold Applicant Count"
+            "Protected Applicant Count", "Above-Threshold Applicant Count",
+            "Excluded by Eligibility Count", "Duplicate Review Count"
         ],
         "Value": [
             APP_VERSION, params.total_budget, params.min_application, params.protected_threshold,
             protected_spend, remaining_budget, base_floor_cost, extra_budget, params.haircut_mode,
             params.haircut_rate, params.soft_cap, params.penalty_weight, yw1, yw2, len(df),
-            protected_count, above_count
+            protected_count, above_count, len(excluded_eligibility), len(review_table[review_table["DuplicateKey"].duplicated(keep=False)])
         ]
     })
 
@@ -465,12 +521,13 @@ def run_model(historic_file, current_file, params: ModelParams) -> Dict[str, Any
         "Diagnostic": [
             "Protected applicants count", "Above-threshold applicants count", "Protected spend",
             "Remaining budget after protected spend", "Base floor cost for above-threshold applicants",
-            "Extra budget above floor", "Fair total", "Dynamic total", "Total requested"
+            "Extra budget above floor", "Fair total", "Dynamic total", "Total requested",
+            "Included in model", "Excluded by eligibility"
         ],
         "Value": [
             protected_count, above_count, protected_spend, remaining_budget, base_floor_cost,
             extra_budget, df["RecommendedAllocation_Fair"].sum(), df["RecommendedAllocation_Dynamic"].sum(),
-            df["RequestedAmount"].sum()
+            df["RequestedAmount"].sum(), len(df), len(excluded_eligibility)
         ]
     })
 
@@ -483,19 +540,12 @@ def run_model(historic_file, current_file, params: ModelParams) -> Dict[str, Any
         "Validation": [
             "Row count preserved after history match",
             "Fair total reconciles to budget",
-            "Dynamic total reconciles to budget"
+            "Dynamic total reconciles to budget",
+            "Eligibility exclusion applied",
+            "Duplicate review generated"
         ],
-        "Status": ["PASS", "PASS", "PASS"]
+        "Status": ["PASS", "PASS", "PASS", "PASS", "PASS"]
     })
-
-    if len(abn_flags) == 0:
-        abn_flags = pd.DataFrame({"Note": ["No current-round ABN/name inconsistency flags found."]})
-
-    dup_cols = [c for c in [
-        "ApplicationID", "OrganisationName", "OrganisationABN", "RequestedAmount",
-        "StartTime", "CompletionTime", "Eligible?", "DuplicateKey"
-    ] if c in dup_review.columns]
-    duplicate_review = dup_review[dup_cols].copy() if len(dup_review) > 0 else pd.DataFrame({"Note": ["No duplicate current-round submissions found."]})
 
     fair_submission_view = results[[
         "OrganisationName", "OrganisationABN", "RequestedAmount", "RecommendedAllocation_Fair", "ProtectedFlag"
@@ -508,17 +558,39 @@ def run_model(historic_file, current_file, params: ModelParams) -> Dict[str, Any
     dynamic_submission_view = _add_totals_row(dynamic_submission_view, "RecommendedAllocation_Dynamic", protected_count, above_count)
     export_results = _add_totals_row(results, "RecommendedAllocation_Fair", protected_count, above_count)
 
+    included_in_model = df[[
+        "ApplicationID", "OrganisationName", "OrganisationABN", "RequestedAmount", "ProtectedFlag",
+        "RecommendedAllocation_Fair", "RecommendedAllocation_Dynamic"
+    ]].copy()
+    included_in_model["ModelStatus"] = "Included"
+
+    excluded_by_eligibility = excluded_eligibility.copy()
+    if len(excluded_by_eligibility) == 0:
+        excluded_by_eligibility = pd.DataFrame({"Note": ["No rows excluded by eligibility."]})
+
+    if len(review_table) == 0:
+        review_table = pd.DataFrame({"Note": ["No duplicate or eligibility review rows."]})
+
+    review_table_display = review_table.copy()
+    keep_cols = [c for c in [
+        "ApplicationID", "OrganisationName", "OrganisationABN", "RequestedAmount",
+        "Eligible?", "LastModifiedTime", "CompletionTime", "StartTime",
+        "DuplicateKey", "ReviewStatus"
+    ] if c in review_table_display.columns]
+    review_table_display = review_table_display[keep_cols].copy()
+
     excel_bytes = build_excel_bytes({
         "Parameters": parameters,
         "Allocation Results": export_results,
         "Submission View Fair": fair_submission_view,
         "Submission View Dynamic": dynamic_submission_view,
+        "Included in Model": included_in_model,
+        "Excluded by Eligibility": excluded_by_eligibility,
+        "Duplicate Review": review_table_display,
         "Method Comparison": method_comparison,
         "Scenario Diagnostics": diagnostics,
         "Penalty Impact": penalty_impact,
         "Validation": validation,
-        "Duplicate Review": duplicate_review,
-        "ABN Flags": abn_flags,
     })
 
     return {
@@ -528,8 +600,9 @@ def run_model(historic_file, current_file, params: ModelParams) -> Dict[str, Any
         "diagnostics": diagnostics,
         "penalty_impact": penalty_impact,
         "validation": validation,
-        "duplicate_review": duplicate_review,
-        "abn_flags": abn_flags,
+        "review_table": review_table_display,
+        "excluded_by_eligibility": excluded_by_eligibility,
+        "included_in_model": included_in_model,
         "submission_view_fair": fair_submission_view,
         "submission_view_dynamic": dynamic_submission_view,
         "excel_bytes": excel_bytes,

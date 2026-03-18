@@ -1,5 +1,13 @@
 # Changelog
 
+## v1.1.2
+- Added support for `ID` and `Id` in current workbook ingestion
+- Preserved `Last modified time` and made it the first-choice timestamp
+- Excluded rows marked `N` / `NO` in `Eligible?` from the live model
+- Added onscreen Eligibility & Duplicate Review
+- Added XLSX sheets for Included in Model, Excluded by Eligibility, and Duplicate Review
+- Improved duplicate handling and audit visibility
+
 ## v1.1.1
 - Changed non-budget controls to recalculate live
 - Retained budget Confirm / Lock behaviour
