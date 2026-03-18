@@ -32,6 +32,19 @@ A Streamlit web app for testing Volunteer Grants allocation scenarios.
 
 ## Deploy on Streamlit Community Cloud
 
+## Documentation maintenance
+
+When the app is updated, the documentation should be reviewed for consistency.
+
+At minimum, update:
+- CHANGELOG.md
+- README.md
+
+Where user-facing behaviour changes, also review:
+- USER_GUIDE.md
+- COMMITTEE_BRIEFING.md
+- MODEL_DOCUMENTATION.md
+
 Use this entrypoint:
 
 ```text
