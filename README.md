@@ -1,4 +1,5 @@
 # Volunteer Grants Allocation Model (Streamlit)
+# v1.0.0
 
 Files:
 - `streamlit_app.py` — Streamlit front end
